@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annotate → Paste</title>
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #1e2128;
+    --panel-2: #262a33;
+    --line: #333846;
+    --fg: #e6e8ee;
+    --muted: #8b93a7;
+    --accent: #4c8dff;
+    --ok: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.45 ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---------- top bar ---------- */
+  header {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 8px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    flex: none;
+  }
+  .field {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0 8px;
+    height: 30px;
+  }
+  .field label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .field input {
+    background: none; border: 0; color: var(--fg); font: inherit;
+    outline: none; min-width: 0;
+  }
+  #url  { width: 300px; }
+  #note { width: 240px; }
+
+  .group { display: flex; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px; }
+  button {
+    background: none; border: 0; color: var(--fg); font: inherit;
+    height: 26px; min-width: 30px; padding: 0 9px;
+    border-radius: 4px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: #333846; }
+  button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  button:disabled { opacity: .35; cursor: default; }
+
+  .swatch {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer; padding: 0; min-width: 0;
+  }
+  .swatch[aria-pressed="true"] { border-color: #fff; }
+  .swatch:hover { background: none; }
+
+  .spacer { flex: 1; }
+  .primary { background: var(--accent); color: #fff; height: 30px; padding: 0 14px; font-weight: 600; }
+  .primary:hover:not(:disabled) { background: #5d99ff; }
+  .ghost { background: var(--panel-2); border: 1px solid var(--line); height: 30px; padding: 0 12px; }
+
+  input[type=range] { width: 84px; accent-color: var(--accent); }
+
+  /* ---------- stage ---------- */
+  main {
+    flex: 1; position: relative; overflow: auto;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  #wrap { position: relative; line-height: 0; }
+  canvas {
+    max-width: 100%;
+    box-shadow: 0 6px 28px rgba(0,0,0,.5);
+    border-radius: 3px;
+    cursor: crosshair;
+    touch-action: none;
+  }
+  #drop {
+    border: 2px dashed var(--line);
+    border-radius: 12px;
+    padding: 64px 72px;
+    text-align: center;
+    color: var(--muted);
+    line-height: 1.9;
+  }
+  #drop strong { color: var(--fg); display: block; font-size: 17px; margin-bottom: 10px; }
+  kbd {
+    background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 2px 6px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--fg);
+  }
+  body.dragging #drop { border-color: var(--accent); color: var(--fg); }
+
+  /* inline text-entry box */
+  #textbox {
+    position: absolute; display: none;
+    background: rgba(0,0,0,.75); color: #fff;
+    border: 1px solid var(--accent); border-radius: 3px;
+    padding: 2px 5px; outline: none; font: inherit; line-height: 1.2;
+    min-width: 60px;
+  }
+
+  /* ---------- toast ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 14px);
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-left: 3px solid var(--ok);
+    padding: 9px 15px; border-radius: 7px;
+    opacity: 0; pointer-events: none; transition: .18s ease;
+    box-shadow: 0 6px 24px rgba(0,0,0,.5); max-width: 70vw;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.warn { border-left-color: #d29922; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="field">
+    <label for="url">URL</label>
+    <input id="url" type="text" placeholder="http://localhost:3000/…" spellcheck="false">
+  </div>
+  <div class="field">
+    <label for="note">Note</label>
+    <input id="note" type="text" placeholder="optional one-liner" spellcheck="false">
+  </div>
+
+  <div class="group" id="tools">
+    <button data-tool="pen"    aria-pressed="true"  title="Pen (P)">✏️</button>
+    <button data-tool="arrow"  aria-pressed="false" title="Arrow (A)">↗</button>
+    <button data-tool="rect"   aria-pressed="false" title="Rectangle (R)">▭</button>
+    <button data-tool="ellipse"aria-pressed="false" title="Ellipse (O)">◯</button>
+    <button data-tool="text"   aria-pressed="false" title="Text (T)">T</button>
+    <button data-tool="marker" aria-pressed="false" title="Numbered marker (N)">①</button>
+  </div>
+
+  <div class="group" id="colors"></div>
+
+  <div class="field" title="Stroke width">
+    <label>W</label>
+    <input id="width" type="range" min="1" max="10" value="3">
+  </div>
+
+  <div class="group">
+    <button id="undo" title="Undo (⌘Z)" disabled>↶</button>
+    <button id="redo" title="Redo (⇧⌘Z)" disabled>↷</button>
+    <button id="clear" title="Remove all annotations">Clear</button>
+  </div>
+
+  <span class="spacer"></span>
+  <button class="ghost" id="download" disabled>Download</button>
+  <button class="primary" id="copy" disabled>Copy image ⌘⇧C</button>
+</header>
+
+<main>
+  <div id="drop">
+    <strong>Paste a screenshot</strong>
+    <kbd>⌘</kbd> <kbd>⌃</kbd> <kbd>⇧</kbd> <kbd>4</kbd> to capture to clipboard, then <kbd>⌘</kbd> <kbd>V</kbd> here
+    <br>or drop an image · <kbd>click</kbd> to browse
+  </div>
+  <div id="wrap" hidden>
+    <canvas id="cv"></canvas>
+    <input id="textbox" spellcheck="false">
+  </div>
+</main>
+
+<div id="toast"></div>
+<input type="file" id="file" accept="image/*" hidden>
+
+<script>
+(() => {
+  'use strict';
+
+  const PALETTE = ['#ff3b30', '#ffcc00', '#34c759', '#4c8dff', '#ff2d95', '#ffffff', '#000000'];
+
+  const $ = id => document.getElementById(id);
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  const wrap = $('wrap'), drop = $('drop'), textbox = $('textbox');
+
+  const state = {
+    img: null,
+    shapes: [],
+    redo: [],
+    tool: 'pen',
+    color: PALETTE[0],
+    width: 3,
+    markerN: 0,
+    drawing: null,
+  };
+
+  /* ---------------- palette ---------------- */
+  PALETTE.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.className = 'swatch';
+    b.style.background = c;
+    b.dataset.color = c;
+    b.setAttribute('aria-pressed', String(i === 0));
+    b.title = c;
+    $('colors').appendChild(b);
+  });
+
+  const press = (container, attr, val) =>
+    [...container.querySelectorAll('button')].forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset[attr] === val)));
+
+  $('colors').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.color = b.dataset.color;
+    press($('colors'), 'color', state.color);
+  });
+
+  $('tools').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    setTool(b.dataset.tool);
+  });
+
+  function setTool(t) {
+    commitText();
+    state.tool = t;
+    press($('tools'), 'tool', t);
+  }
+
+  $('width').addEventListener('input', e => { state.width = +e.target.value; });
+
+  /* ---------------- image loading ---------------- */
+  function loadImage(src) {
+    const img = new Image();
+    img.onload = () => {
+      state.img = img;
+      state.shapes = []; state.redo = []; state.markerN = 0;
+      cv.width = img.naturalWidth;
+      cv.height = img.naturalHeight;
+      drop.hidden = true; wrap.hidden = false;
+      $('copy').disabled = $('download').disabled = false;
+      redraw(); sync();
+      toast(`Loaded ${img.naturalWidth}×${img.naturalHeight}`);
+    };
+    img.onerror = () => toast('Could not read that image', true);
+    img.src = src;
+  }
+
+  function fromBlob(blob) {
+    const r = new FileReader();
+    r.onload = () => loadImage(r.result);
+    r.readAsDataURL(blob);
+  }
+
+  // paste
+  document.addEventListener('paste', e => {
+    const items = [...(e.clipboardData?.items || [])];
+    const imgItem = items.find(i => i.type.startsWith('image/'));
+    if (imgItem) { e.preventDefault(); fromBlob(imgItem.getAsFile()); return; }
+    // no image → let text inputs handle their own paste normally
+  });
+
+  // drag + drop
+  ['dragenter', 'dragover'].forEach(ev =>
+    document.addEventListener(ev, e => { e.preventDefault(); document.body.classList.add('dragging'); }));
+  ['dragleave', 'drop'].forEach(ev =>
+    document.addEventListener(ev, e => { e.preventDefault(); document.body.classList.remove('dragging'); }));
+  document.addEventListener('drop', e => {
+    const f = [...(e.dataTransfer?.files || [])].find(f => f.type.startsWith('image/'));
+    if (f) fromBlob(f);
+  });
+
+  // click-to-browse
+  drop.addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { if (e.target.files[0]) fromBlob(e.target.files[0]); });
+
+  /* ---------------- coordinate mapping ---------------- */
+  // Canvas is at natural image resolution but displayed scaled. Convert pointer
+  // coords into canvas units, and scale stroke/font so they look consistent
+  // regardless of how big the underlying screenshot is (retina grabs are huge).
+  const ratio = () => cv.width / cv.getBoundingClientRect().width;
+
+  function pos(e) {
+    const r = cv.getBoundingClientRect();
+    return {
+      x: (e.clientX - r.left) * (cv.width / r.width),
+      y: (e.clientY - r.top) * (cv.height / r.height),
+    };
+  }
+
+  /* ---------------- drawing ---------------- */
+  cv.addEventListener('pointerdown', e => {
+    if (textbox.style.display === 'block') { commitText(); return; }
+    const p = pos(e), k = ratio();
+
+    if (state.tool === 'text') { openText(e, p, k); return; }
+
+    if (state.tool === 'marker') {
+      pushShape({ type: 'marker', x: p.x, y: p.y, n: ++state.markerN, color: state.color, k });
+      return;
+    }
+
+    cv.setPointerCapture(e.pointerId);
+    const base = { color: state.color, w: state.width * k };
+    state.drawing = state.tool === 'pen'
+      ? { type: 'pen', pts: [p], ...base }
+      : { type: state.tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y, ...base };
+  });
+
+  cv.addEventListener('pointermove', e => {
+    const d = state.drawing; if (!d) return;
+    const p = pos(e);
+    if (d.type === 'pen') d.pts.push(p); else { d.x2 = p.x; d.y2 = p.y; }
+    redraw(d);
+  });
+
+  const endStroke = () => {
+    const d = state.drawing; if (!d) return;
+    state.drawing = null;
+    // discard accidental zero-length drags
+    const tiny = d.type !== 'pen' && Math.hypot(d.x2 - d.x1, d.y2 - d.y1) < 4;
+    if (tiny || (d.type === 'pen' && d.pts.length < 2)) { redraw(); return; }
+    pushShape(d);
+  };
+  cv.addEventListener('pointerup', endStroke);
+  cv.addEventListener('pointercancel', endStroke);
+
+  function pushShape(s) {
+    state.shapes.push(s);
+    state.redo.length = 0;
+    redraw(); sync();
+  }
+
+  /* ---------------- text tool ---------------- */
+  let pending = null;
+  function openText(e, p, k) {
+    const r = cv.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+    const size = Math.max(13, 16 * k);
+    pending = { x: p.x, y: p.y, color: state.color, size };
+    textbox.value = '';
+    textbox.style.display = 'block';
+    textbox.style.left = (e.clientX - wr.left) + 'px';
+    textbox.style.top = (e.clientY - wr.top) + 'px';
+    textbox.style.color = state.color;
+    textbox.style.fontSize = Math.max(12, size / k) + 'px';
+    setTimeout(() => textbox.focus(), 0);
+  }
+
+  function commitText() {
+    if (!pending) return;
+    const v = textbox.value.trim();
+    const p = pending;
+    pending = null;
+    textbox.style.display = 'none';
+    textbox.value = '';
+    if (v) pushShape({ type: 'text', ...p, text: v });
+  }
+
+  textbox.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); commitText(); }
+    if (e.key === 'Escape') { pending = null; textbox.style.display = 'none'; }
+  });
+  textbox.addEventListener('blur', commitText);
+
+  /* ---------------- render ---------------- */
+  function redraw(preview) {
+    if (!state.img) return;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(state.img, 0, 0);
+    for (const s of state.shapes) paint(ctx, s);
+    if (preview) paint(ctx, preview);
+  }
+
+  function paint(c, s) {
+    c.save();
+    c.strokeStyle = s.color;
+    c.fillStyle = s.color;
+    c.lineWidth = s.w || 3;
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+
+    if (s.type === 'pen') {
+      c.beginPath();
+      c.moveTo(s.pts[0].x, s.pts[0].y);
+      for (let i = 1; i < s.pts.length; i++) c.lineTo(s.pts[i].x, s.pts[i].y);
+      c.stroke();
+
+    } else if (s.type === 'rect') {
+      c.strokeRect(Math.min(s.x1, s.x2), Math.min(s.y1, s.y2),
+                   Math.abs(s.x2 - s.x1), Math.abs(s.y2 - s.y1));
+
+    } else if (s.type === 'ellipse') {
+      c.beginPath();
+      c.ellipse((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2,
+                Math.abs(s.x2 - s.x1) / 2, Math.abs(s.y2 - s.y1) / 2, 0, 0, Math.PI * 2);
+      c.stroke();
+
+    } else if (s.type === 'arrow') {
+      const ang = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
+      const head = Math.max(s.w * 4, 10);
+      // stop the shaft short so it doesn't poke through the arrowhead
+      const bx = s.x2 - Math.cos(ang) * head * 0.7;
+      const by = s.y2 - Math.sin(ang) * head * 0.7;
+      c.beginPath(); c.moveTo(s.x1, s.y1); c.lineTo(bx, by); c.stroke();
+      c.beginPath();
+      c.moveTo(s.x2, s.y2);
+      c.lineTo(s.x2 - head * Math.cos(ang - Math.PI / 7), s.y2 - head * Math.sin(ang - Math.PI / 7));
+      c.lineTo(s.x2 - head * Math.cos(ang + Math.PI / 7), s.y2 - head * Math.sin(ang + Math.PI / 7));
+      c.closePath(); c.fill();
+
+    } else if (s.type === 'text') {
+      c.font = `600 ${s.size}px ui-sans-serif, -apple-system, system-ui, sans-serif`;
+      c.textBaseline = 'top';
+      const m = c.measureText(s.text), pad = s.size * 0.25;
+      // near-opaque so coloured text stays legible over light screenshots
+      c.fillStyle = 'rgba(0,0,0,.85)';
+      c.fillRect(s.x - pad, s.y - pad, m.width + pad * 2, s.size * 1.25 + pad * 2);
+      c.fillStyle = s.color;
+      c.fillText(s.text, s.x, s.y);
+
+    } else if (s.type === 'marker') {
+      const r = Math.max(13, 15 * s.k);
+      c.beginPath(); c.arc(s.x, s.y, r, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#fff'; c.lineWidth = Math.max(2, r * 0.14); c.stroke();
+      c.fillStyle = '#fff';
+      c.font = `700 ${r * 1.15}px ui-sans-serif, -apple-system, system-ui, sans-serif`;
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(String(s.n), s.x, s.y + r * 0.04);
+    }
+    c.restore();
+  }
+
+  /* ---------------- history ---------------- */
+  function sync() {
+    $('undo').disabled = !state.shapes.length;
+    $('redo').disabled = !state.redo.length;
+  }
+  $('undo').addEventListener('click', () => {
+    const s = state.shapes.pop();
+    if (!s) return;
+    if (s.type === 'marker') state.markerN--;
+    state.redo.push(s); redraw(); sync();
+  });
+  $('redo').addEventListener('click', () => {
+    const s = state.redo.pop();
+    if (!s) return;
+    if (s.type === 'marker') state.markerN++;
+    state.shapes.push(s); redraw(); sync();
+  });
+  $('clear').addEventListener('click', () => {
+    state.shapes = []; state.redo = []; state.markerN = 0; redraw(); sync();
+  });
+
+  /* ---------------- export ---------------- */
+  // The clipboard carries one payload, so the URL + note are burned into a
+  // header strip on the image itself. One paste delivers everything.
+  function compose() {
+    const url = $('url').value.trim();
+    const note = $('note').value.trim();
+    if (!url && !note) return cv;
+
+    const fs = Math.max(15, Math.round(cv.width / 78));
+    const pad = Math.round(fs * 0.7);
+    const lines = [url, note].filter(Boolean);
+    const h = lines.length * Math.round(fs * 1.42) + pad * 2;
+
+    const out = document.createElement('canvas');
+    out.width = cv.width;
+    out.height = cv.height + h;
+    const c = out.getContext('2d');
+
+    c.fillStyle = '#15171c';
+    c.fillRect(0, 0, out.width, h);
+    c.textBaseline = 'top';
+    lines.forEach((t, i) => {
+      const y = pad + i * Math.round(fs * 1.42);
+      const isUrl = i === 0 && url;
+      c.font = `${isUrl ? '600' : '400'} ${fs}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+      c.fillStyle = isUrl ? '#6fa8ff' : '#c3c9d6';
+      c.fillText(t, pad, y);
+    });
+    c.drawImage(cv, 0, h);
+    return out;
+  }
+
+  const toBlob = canvas => new Promise(res => canvas.toBlob(res, 'image/png'));
+
+  async function copy() {
+    const canvas = compose();
+    try {
+      if (!navigator.clipboard?.write) throw new Error('no clipboard api');
+      // Safari needs the Promise form; Chrome accepts both.
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': toBlob(canvas) })
+      ]);
+      toast('Copied — ⌘V into Claude Code');
+    } catch (err) {
+      // file:// or a denied permission lands here. Downloading always works.
+      download(canvas);
+      toast('Clipboard blocked — downloaded instead', true);
+    }
+  }
+
+  function download(canvas) {
+    const a = document.createElement('a');
+    a.download = 'annotated.png';
+    a.href = (canvas || compose()).toDataURL('image/png');
+    a.click();
+  }
+
+  $('copy').addEventListener('click', copy);
+  $('download').addEventListener('click', () => { download(); toast('Downloaded'); });
+
+  /* ---------------- shortcuts ---------------- */
+  const TOOL_KEYS = { p: 'pen', a: 'arrow', r: 'rect', o: 'ellipse', t: 'text', n: 'marker' };
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    const mod = e.metaKey || e.ctrlKey;
+
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'c') { e.preventDefault(); copy(); return; }
+    if (mod && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      (e.shiftKey ? $('redo') : $('undo')).click();
+      return;
+    }
+    if (mod) return;
+
+    const t = TOOL_KEYS[e.key.toLowerCase()];
+    if (t) setTool(t);
+    if (e.key >= '1' && e.key <= '7') {
+      const b = $('colors').children[+e.key - 1];
+      if (b) b.click();
+    }
+  });
+
+  /* ---------------- toast ---------------- */
+  let toastT;
+  function toast(msg, warn) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.toggle('warn', !!warn);
+    el.classList.add('show');
+    clearTimeout(toastT);
+    toastT = setTimeout(() => el.classList.remove('show'), 2400);
+  }
+
+  // keep the displayed canvas from overflowing the viewport height
+  const fit = () => {
+    if (!state.img) return;
+    cv.style.maxHeight = (window.innerHeight - document.querySelector('header').offsetHeight - 40) + 'px';
+  };
+  window.addEventListener('resize', fit);
+  new MutationObserver(fit).observe(wrap, { attributes: true });
+  fit();
+})();
+</script>
+</body>
+</html>
