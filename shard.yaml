@@ -1,7 +1,8 @@
 shard-spec: "0.2.0"
-version: "0.1.0"
+version: "0.1.1"
 name: Visual Feedback
 shorthand: vf
 description: Visual UI feedback loop — instrument a dev app with Agentation and annotate screenshots for AI coding agents
 dependencies:
   - source: NUU-Cognition/shard-flint
+    version: "0.3.0"
