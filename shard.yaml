@@ -1,5 +1,9 @@
 shard-spec: "0.2.0"
-version: "0.1.1"
+id: c8bc227d-07b4-425b-8883-21e5b94eb240
+org: nuucognition
+source:
+  id: 6820e012-1e2f-48a5-b303-37cc347b31ce
+version: "0.1.2"
 name: Visual Feedback
 shorthand: vf
 description: Visual UI feedback loop — instrument a dev app with Agentation and annotate screenshots for AI coding agents
